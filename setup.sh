@@ -1,0 +1,253 @@
+#!/bin/bash
+# =============================================================================
+# Idempotent Raspberry Pi Kubernetes Setup Script
+# Installs: MicroK8s, kubectl, helm, cert-manager, ArgoCD
+# Assumes: Raspberry Pi OS (aarch64), user "jakob"
+# =============================================================================
+
+set -euo pipefail
+
+ARGOCD_HOSTNAME="argocd.jakobjkolb.xyz"
+NEXTCLOUD_HOSTNAME="shitcloud.hopto.org"
+K8S_USER="${SUDO_USER:-jakob}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
+warn() { echo -e "\033[1;33mWARN: $*\033[0m"; }
+
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "Run with sudo: sudo $0"
+    exit 1
+  fi
+}
+
+# =============================================================================
+# PHASE 1: Boot config (requires reboot to take effect)
+# =============================================================================
+
+configure_boot() {
+  log "Configuring boot parameters..."
+
+  # Enable 64-bit kernel
+  if ! grep -q "arm_64bit=1" /boot/firmware/config.txt; then
+    echo "arm_64bit=1" >> /boot/firmware/config.txt
+    echo "  Added arm_64bit=1"
+  else
+    echo "  arm_64bit=1 already set"
+  fi
+
+  # Enable cgroup memory controller
+  CGROUP_PARAMS="cgroup_enable=cpuset cgroup_enable=memory cgroup_memory=1 swapaccount=1"
+  for param in $CGROUP_PARAMS; do
+    if ! grep -q "$param" /boot/firmware/cmdline.txt; then
+      sed -i "s/$/ $param/" /boot/firmware/cmdline.txt
+      echo "  Added $param to cmdline.txt"
+    else
+      echo "  $param already set"
+    fi
+  done
+}
+
+# =============================================================================
+# PHASE 2: Kernel modules
+# =============================================================================
+
+configure_kernel_modules() {
+  log "Loading kernel modules..."
+
+  MODULES="vxlan ip_tables ip6_tables xt_set ip_vs ip_vs_rr ip_vs_wrr ip_vs_sh"
+
+  for mod in $MODULES; do
+    modprobe "$mod" 2>/dev/null && echo "  Loaded $mod" || warn "Could not load $mod"
+  done
+
+  # Persist across reboots
+  cat > /etc/modules-load.d/microk8s.conf << EOF
+vxlan
+ip_tables
+ip6_tables
+xt_set
+ip_vs
+ip_vs_rr
+ip_vs_wrr
+ip_vs_sh
+EOF
+  echo "  Persisted modules to /etc/modules-load.d/microk8s.conf"
+}
+
+# =============================================================================
+# PHASE 3: Snap + MicroK8s
+# =============================================================================
+
+install_microk8s() {
+  log "Installing snap and MicroK8s..."
+
+  # Snap
+  if ! command -v snap &>/dev/null; then
+    apt-get update && apt-get install -y snapd
+    systemctl enable --now snapd.socket
+    ln -sf /var/lib/snapd/snap /snap
+  fi
+
+  # PATH
+  if ! echo "$PATH" | grep -q "/snap/bin"; then
+    echo 'export PATH=$PATH:/snap/bin' >> /home/${K8S_USER}/.bashrc
+    export PATH=$PATH:/snap/bin
+  fi
+
+  # MicroK8s
+  if ! snap list microk8s &>/dev/null; then
+    snap install microk8s --classic --channel=1.32/stable
+  else
+    echo "  MicroK8s already installed"
+  fi
+
+  # User group
+  usermod -aG microk8s "$K8S_USER"
+  mkdir -p /home/${K8S_USER}/.kube
+  chown -R ${K8S_USER}:${K8S_USER} /home/${K8S_USER}/.kube
+}
+
+# =============================================================================
+# PHASE 4: cgroup v2 delegation for containerd
+# =============================================================================
+
+configure_cgroup_delegation() {
+  log "Configuring cgroup v2 delegation for containerd..."
+
+  mkdir -p /etc/systemd/system/snap.microk8s.daemon-containerd.service.d/
+
+  cat > /etc/systemd/system/snap.microk8s.daemon-containerd.service.d/delegate.conf << EOF
+[Service]
+Delegate=yes
+EOF
+
+  systemctl daemon-reload
+  echo "  Delegate=yes applied to snap.microk8s.daemon-containerd"
+}
+
+# =============================================================================
+# PHASE 5: Wait for MicroK8s and enable addons
+# =============================================================================
+
+configure_microk8s() {
+  log "Starting MicroK8s and enabling addons..."
+
+  microk8s start || true
+  microk8s status --wait-ready --timeout 120 || warn "MicroK8s not ready yet, continuing..."
+
+  for addon in dns storage ingress cert-manager; do
+    microk8s enable "$addon" 2>/dev/null || echo "  $addon already enabled"
+  done
+
+  # Enable ssl-passthrough on ingress controller
+  log "Enabling ssl-passthrough on nginx ingress..."
+  INGRESS_DS="nginx-ingress-microk8s-controller"
+  if ! microk8s kubectl get daemonset -n ingress "$INGRESS_DS" \
+      -o jsonpath='{.spec.template.spec.containers[0].args}' | grep -q "ssl-passthrough"; then
+    microk8s kubectl patch daemonset -n ingress "$INGRESS_DS" --type=json \
+      -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--enable-ssl-passthrough"}]'
+    echo "  ssl-passthrough enabled"
+  else
+    echo "  ssl-passthrough already enabled"
+  fi
+
+  # Export kubeconfig
+  microk8s config > /home/${K8S_USER}/.kube/config
+  chmod 600 /home/${K8S_USER}/.kube/config
+  chown ${K8S_USER}:${K8S_USER} /home/${K8S_USER}/.kube/config
+  export KUBECONFIG="/home/${K8S_USER}/.kube/config"
+  echo "  kubeconfig written to ~/.kube/config"
+}
+
+# =============================================================================
+# PHASE 6: kubectl + helm
+# =============================================================================
+
+install_tools() {
+  log "Installing kubectl and helm..."
+
+  if ! snap list kubectl &>/dev/null; then
+    snap install kubectl --classic
+  else
+    echo "  kubectl already installed"
+  fi
+
+  if ! snap list helm &>/dev/null; then
+    snap install helm --classic
+  else
+    echo "  helm already installed"
+  fi
+}
+
+# =============================================================================
+# PHASE 7: cert-manager
+# =============================================================================
+
+install_cert_manager() {
+  log "Configuring cert-manager ClusterIssuer..."
+
+  kubectl apply -f "${SCRIPT_DIR}/Issuer.yaml"
+  echo "  ClusterIssuer letsencrypt created"
+}
+
+# =============================================================================
+# PHASE 8: ArgoCD
+# =============================================================================
+
+install_argocd() {
+  log "Installing ArgoCD..."
+
+  helm repo add argo https://argoproj.github.io/argo-helm --force-update
+
+  helm upgrade --install argocd argo/argo-cd \
+    --namespace argocd \
+    --create-namespace \
+    --values "${SCRIPT_DIR}/argocd/argocd-values.yaml" \
+    --wait --timeout 10m
+
+  echo "  ArgoCD installed at https://${ARGOCD_HOSTNAME}"
+  echo "  Initial admin password:"
+  kubectl get secret argocd-initial-admin-secret -n argocd \
+    -o jsonpath="{.data.password}" 2>/dev/null | base64 -d && echo || true
+}
+
+# =============================================================================
+# PHASE 9: Nextcloud ingress (reverse proxy to external service)
+# =============================================================================
+
+configure_nextcloud_ingress() {
+  log "Configuring Nextcloud ingress..."
+
+  kubectl apply -f "${SCRIPT_DIR}/nextcloud-ingress/ingress.yaml"
+  echo "  Nextcloud ingress configured for ${NEXTCLOUD_HOSTNAME}"
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+require_root
+
+echo "=============================================="
+echo " Raspberry Pi Kubernetes Setup"
+echo "=============================================="
+
+configure_boot
+configure_kernel_modules
+install_microk8s
+configure_cgroup_delegation
+configure_microk8s
+install_tools
+install_cert_manager
+install_argocd
+configure_nextcloud_ingress
+
+log "Setup complete!"
+echo ""
+echo "  ArgoCD:    https://${ARGOCD_HOSTNAME}"
+echo "  Nextcloud: https://${NEXTCLOUD_HOSTNAME}"
+echo ""
+warn "If this is a fresh install, a reboot is required for boot params to take effect."
+warn "After reboot, re-run this script to continue from where it left off."

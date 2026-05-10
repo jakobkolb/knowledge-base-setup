@@ -1,0 +1,28 @@
+global:
+  domain: argocd.jakobjkolb.xyz
+
+configs:
+  params:
+    server.insecure: true
+  cm:
+    url: "https://argocd.jakobjkolb.xyz"
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.jakobjkolb.xyz
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+  # Disable TLS on the server itself since nginx handles it via passthrough
+  extraArgs:
+    - --insecure   # remove this if you want end-to-end TLS
