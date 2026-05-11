@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: knowledge-base
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakobkolb/knowledge-base
+    targetRevision: HEAD
+    path: chart
+    helm:
+      parameters:
+        - name: global.clusterIssuer
+          value: letsencrypt
+        - name: global.createSecrets
+          value: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

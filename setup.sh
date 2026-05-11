@@ -350,32 +350,34 @@ EOF
 }
 
 # =============================================================================
-# Main
+# Main — only runs when executed directly, not when sourced
 # =============================================================================
 
-require_root
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  require_root
 
-echo "=============================================="
-echo " Raspberry Pi Kubernetes Setup"
-echo "=============================================="
+  echo "=============================================="
+  echo " Raspberry Pi Kubernetes Setup"
+  echo "=============================================="
 
-configure_boot
-configure_kernel_modules
-install_microk8s
-configure_cgroup_delegation
-configure_microk8s
-install_tools
-configure_calico_ipv6_fix
-install_cert_manager
-install_argocd
-bootstrap_mcp_secrets
-configure_argocd_apps
-configure_nextcloud_ingress
+  configure_boot
+  configure_kernel_modules
+  install_microk8s
+  configure_cgroup_delegation
+  configure_microk8s
+  install_tools
+  configure_calico_ipv6_fix
+  install_cert_manager
+  install_argocd
+  bootstrap_mcp_secrets
+  configure_argocd_apps
+  configure_nextcloud_ingress
 
-log "Setup complete!"
-echo ""
-echo "  ArgoCD:    https://${ARGOCD_HOSTNAME}"
-echo "  Nextcloud: https://${NEXTCLOUD_HOSTNAME}"
-echo ""
-warn "If this is a fresh install, a reboot is required for boot params to take effect."
-warn "After reboot, re-run this script to continue from where it left off."
+  log "Setup complete!"
+  echo ""
+  echo "  ArgoCD:    https://${ARGOCD_HOSTNAME}"
+  echo "  Nextcloud: https://${NEXTCLOUD_HOSTNAME}"
+  echo ""
+  warn "If this is a fresh install, a reboot is required for boot params to take effect."
+  warn "After reboot, re-run this script to continue from where it left off."
+fi
