@@ -214,7 +214,108 @@ install_argocd() {
 }
 
 # =============================================================================
-# PHASE 9: Nextcloud ingress (reverse proxy to external service)
+# PHASE 9: Pre-create MCP secrets (must exist before ArgoCD first sync)
+# =============================================================================
+
+bootstrap_mcp_secrets() {
+  log "Bootstrapping MCP secrets in namespace mcp..."
+
+  local SECRETS_FILE="${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
+
+  if [[ ! -f "$SECRETS_FILE" ]]; then
+    warn "argocd/apps/secrets.values.yaml not found — skipping secret bootstrap."
+    warn "Copy it from secrets.values.yaml.example, fill in real values, and re-run."
+    return
+  fi
+
+  # Parse scalar values from the YAML (python3 ships on RPi OS; no external deps needed)
+  read -r GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET DEX_CLIENT_SECRET COOKIE_SECRET OBSIDIAN_API_KEY < <(
+    python3 - "$SECRETS_FILE" <<'EOF'
+import sys, re
+text = open(sys.argv[1]).read()
+def val(key):
+    m = re.search(r'^\s+' + re.escape(key) + r':\s+"?([^"\n]+)"?', text, re.MULTILINE)
+    return (m.group(1).strip('"').strip("'") if m else '')
+print(val('githubClientId'), val('githubClientSecret'), val('dexClientSecret'),
+      val('cookieSecret'), val('OBSIDIAN_API_KEY'))
+EOF
+  )
+
+  # Extract calendar configFile.content multiline block
+  CALENDAR_CONFIG=$(python3 - "$SECRETS_FILE" <<'EOF'
+import sys, re
+text = open(sys.argv[1]).read()
+# Match the indented block after "content: |"
+m = re.search(r'content:\s+\|\n((?:[ \t]+[^\n]*\n?)+)', text)
+if m:
+    import textwrap
+    print(textwrap.dedent(m.group(1)).rstrip())
+EOF
+  )
+
+  # Validate required values
+  local missing=()
+  [[ -z "$GITHUB_CLIENT_ID" ]]     && missing+=("githubClientId")
+  [[ -z "$GITHUB_CLIENT_SECRET" ]] && missing+=("githubClientSecret")
+  [[ -z "$DEX_CLIENT_SECRET" ]]    && missing+=("dexClientSecret")
+  [[ -z "$COOKIE_SECRET" ]]        && missing+=("cookieSecret")
+  [[ -z "$OBSIDIAN_API_KEY" ]]     && missing+=("OBSIDIAN_API_KEY")
+  if (( ${#missing[@]} > 0 )); then
+    warn "Missing values in secrets.values.yaml: ${missing[*]}"
+    warn "Fill in all required fields and re-run."
+    return 1
+  fi
+
+  kubectl create namespace mcp --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl -n mcp create secret generic dex-github-client \
+    --from-literal=GITHUB_CLIENT_ID="$GITHUB_CLIENT_ID" \
+    --from-literal=GITHUB_CLIENT_SECRET="$GITHUB_CLIENT_SECRET" \
+    --save-config --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl -n mcp create secret generic dex-static-client \
+    --from-literal=DEX_CLIENT_SECRET="$DEX_CLIENT_SECRET" \
+    --save-config --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl -n mcp create secret generic oauth2-proxy \
+    --from-literal=client-id="claude-mcp" \
+    --from-literal=client-secret="$DEX_CLIENT_SECRET" \
+    --from-literal=cookie-secret="$COOKIE_SECRET" \
+    --save-config --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl -n mcp create secret generic knowledge-base-mcp-obsidian-mcp-secrets \
+    --from-literal=OBSIDIAN_API_KEY="$OBSIDIAN_API_KEY" \
+    --save-config --dry-run=client -o yaml | kubectl apply -f -
+
+  if [[ -n "$CALENDAR_CONFIG" ]]; then
+    kubectl -n mcp create secret generic knowledge-base-mcp-calendar-config \
+      --from-literal=config.yaml="$CALENDAR_CONFIG" \
+      --save-config --dry-run=client -o yaml | kubectl apply -f -
+    echo "  Calendar config secret created"
+  else
+    warn "No calendar config found in secrets.values.yaml — knowledge-base-mcp-calendar-config not created"
+  fi
+
+  echo "  All MCP secrets created in namespace mcp"
+}
+
+# =============================================================================
+# PHASE 10: ArgoCD apps
+# =============================================================================
+
+configure_argocd_apps() {
+  log "Configuring ArgoCD apps..."
+
+  for app in "${SCRIPT_DIR}"/argocd/apps/*.yaml; do
+    # Skip helm values files (not Kubernetes manifests)
+    [[ "$(basename "$app")" == *.values.yaml ]] && continue
+    kubectl apply -f "$app"
+    echo "  Applied $(basename "$app")"
+  done
+}
+
+# =============================================================================
+# PHASE 11: Nextcloud ingress (reverse proxy to external service)
 # =============================================================================
 
 configure_nextcloud_ingress() {
@@ -222,6 +323,30 @@ configure_nextcloud_ingress() {
 
   kubectl apply -f "${SCRIPT_DIR}/nextcloud-ingress/ingress.yaml"
   echo "  Nextcloud ingress configured for ${NEXTCLOUD_HOSTNAME}"
+}
+
+# =============================================================================
+# PHASE 12: Calico IPv6 veth fix
+# =============================================================================
+
+configure_calico_ipv6_fix() {
+  log "Disabling IPv6 on Calico veth interfaces..."
+
+  # All cali* veth pairs share MAC ee:ee:ee:ee:ee:ee, giving them the same
+  # IPv6 link-local (fe80::ecee:eeff:feee:eeee). The kernel's DAD detects the
+  # collision and oscillates the address, triggering constant Calico iptables
+  # reconciliation loops that cause kubelet HTTP probes to return EINVAL.
+  cat > /etc/sysctl.d/99-calico-no-ipv6.conf << 'EOF'
+net.ipv6.conf.default.disable_ipv6 = 1
+EOF
+  sysctl -p /etc/sysctl.d/99-calico-no-ipv6.conf
+
+  # Apply immediately to any existing cali* interfaces
+  for iface in $(ip link show | grep "cali" | awk '{print $2}' | tr -d ':' | cut -d'@' -f1); do
+    sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=1" 2>/dev/null || true
+  done
+
+  echo "  IPv6 disabled on Calico veth interfaces"
 }
 
 # =============================================================================
@@ -240,8 +365,11 @@ install_microk8s
 configure_cgroup_delegation
 configure_microk8s
 install_tools
+configure_calico_ipv6_fix
 install_cert_manager
 install_argocd
+bootstrap_mcp_secrets
+configure_argocd_apps
 configure_nextcloud_ingress
 
 log "Setup complete!"
