@@ -189,18 +189,22 @@ All Calico veth pairs on the RPi share the MAC `ee:ee:ee:ee:ee:ee`, which
 gives them the same IPv6 link-local address. The kernel's DAD mechanism
 oscillates the address, causing kubelet probes to fail with `EINVAL`.
 
-The fix persists both `net.ipv6.conf.all.disable_ipv6=1` and
-`net.ipv6.conf.default.disable_ipv6=1` via `/etc/sysctl.d/99-calico-no-ipv6.conf`.
-`all` covers interfaces that exist at run time; `default` is intended to cover new
-ones, but does not reliably propagate to new veth pairs on this kernel. For that
-reason `configure_calico_ipv6_fix` is called **twice**: once before ArgoCD and
-once after, so interfaces created by ArgoCD pod deployments are also covered.
+The fix persists `net.ipv6.conf.default.disable_ipv6=1` via
+`/etc/sysctl.d/99-calico-no-ipv6.conf` so new `cali*` veth pairs inherit the
+setting. `net.ipv6.conf.all` is intentionally **not** used — it would also disable
+IPv6 on `lo`, breaking the MicroK8s API server which listens on `[::1]:16443`.
+
+For existing interfaces the script loops over all `cali*` interfaces explicitly.
+Because `default` does not reliably propagate to new veths on this kernel,
+`configure_calico_ipv6_fix` is called **twice**: once before ArgoCD and once
+after, so interfaces created by ArgoCD pod deployments are also covered.
 
 If a pod is restarted manually after setup and its readiness probe returns `EINVAL`,
 re-run the fix with:
 
 ```bash
-sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sudo sysctl -w $(ip link show | grep cali | awk '{print $2}' | tr -d ':' | cut -d'@' -f1 | \
+  xargs -I{} echo "net.ipv6.conf.{}.disable_ipv6=1") 2>/dev/null || true
 ```
 
 ---

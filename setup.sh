@@ -355,13 +355,14 @@ configure_calico_ipv6_fix() {
   # IPv6 link-local (fe80::ecee:eeff:feee:eeee). The kernel's DAD detects the
   # collision and oscillates the address, triggering constant Calico iptables
   # reconciliation loops that cause kubelet HTTP probes to return EINVAL.
+  # Only disable IPv6 on new cali* veth pairs by default — do NOT use
+  # net.ipv6.conf.all which would also hit lo and break [::1]:16443 (MicroK8s API).
   cat > /etc/sysctl.d/99-calico-no-ipv6.conf << 'EOF'
-net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 EOF
   sysctl -p /etc/sysctl.d/99-calico-no-ipv6.conf
 
-  # Apply immediately to any existing cali* interfaces
+  # Apply immediately to existing cali* interfaces (skip lo and other system interfaces)
   for iface in $(ip link show | grep "cali" | awk '{print $2}' | tr -d ':' | cut -d'@' -f1); do
     sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=1" 2>/dev/null || true
   done
