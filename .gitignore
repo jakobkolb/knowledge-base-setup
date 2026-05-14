@@ -1,2 +1,3 @@
 *.secret.yaml
 secrets*.values.yaml
+.claude/settings.local.json
