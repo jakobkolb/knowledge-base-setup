@@ -17,7 +17,7 @@ spec:
           value: "false"
   destination:
     server: https://kubernetes.default.svc
-    namespace: mcp
+    namespace: mcp-prod
   syncPolicy:
     automated:
       prune: true
