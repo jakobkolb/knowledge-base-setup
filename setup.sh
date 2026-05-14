@@ -232,8 +232,11 @@ bootstrap_mcp_secrets() {
   fi
 
   # Parse scalar values from the YAML (python3 ships on RPi OS; no external deps needed)
-  local GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET DEX_CLIENT_SECRET COOKIE_SECRET OBSIDIAN_API_KEY CALENDAR_CONFIG
-  read -r GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET DEX_CLIENT_SECRET COOKIE_SECRET OBSIDIAN_API_KEY < <(
+  local GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET DEX_CLIENT_SECRET COOKIE_SECRET \
+        OBSIDIAN_API_KEY OBSIDIAN_EMAIL OBSIDIAN_PASSWORD OBSIDIAN_SYNC_PASSWORD OBSIDIAN_VAULT \
+        CALENDAR_CONFIG
+  read -r GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET DEX_CLIENT_SECRET COOKIE_SECRET \
+          OBSIDIAN_API_KEY OBSIDIAN_EMAIL OBSIDIAN_PASSWORD OBSIDIAN_SYNC_PASSWORD OBSIDIAN_VAULT < <(
     python3 - "$SECRETS_FILE" <<'EOF'
 import sys, re
 text = open(sys.argv[1]).read()
@@ -241,7 +244,8 @@ def val(key):
     m = re.search(r'^\s+' + re.escape(key) + r':\s+"?([^"\n]+)"?', text, re.MULTILINE)
     return (m.group(1).strip('"').strip("'") if m else '')
 print(val('githubClientId'), val('githubClientSecret'), val('dexClientSecret'),
-      val('cookieSecret'), val('OBSIDIAN_API_KEY'))
+      val('cookieSecret'), val('OBSIDIAN_API_KEY'),
+      val('obsidianEmail'), val('obsidianPassword'), val('obsidianSyncPassword'), val('obsidianVault'))
 EOF
   )
 
@@ -290,6 +294,16 @@ PYEOF
       --from-literal=OBSIDIAN_API_KEY="$OBSIDIAN_API_KEY" \
       --save-config --dry-run=client -o yaml | kubectl apply -f -
     echo "  Obsidian API key secret created"
+  fi
+
+  if [[ -n "$OBSIDIAN_EMAIL" ]]; then
+    kubectl -n "$NS" create secret generic obsidian-headless-auth \
+      --from-literal=email="$OBSIDIAN_EMAIL" \
+      --from-literal=password="$OBSIDIAN_PASSWORD" \
+      --from-literal=sync-password="$OBSIDIAN_SYNC_PASSWORD" \
+      --from-literal=vault="$OBSIDIAN_VAULT" \
+      --save-config --dry-run=client -o yaml | kubectl apply -f -
+    echo "  Obsidian headless auth secret created"
   fi
 
   if [[ -n "$CALENDAR_CONFIG" ]]; then
@@ -375,7 +389,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   configure_calico_ipv6_fix
   install_cert_manager
   install_argocd
-  bootstrap_mcp_secrets mcp         knowledge-base         "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
+  bootstrap_mcp_secrets mcp-prod    knowledge-base-prod    "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging "${SCRIPT_DIR}/argocd/apps/secrets-staging.values.yaml"
   configure_argocd_apps
   configure_nextcloud_ingress

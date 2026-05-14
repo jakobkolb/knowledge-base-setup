@@ -9,7 +9,7 @@ MCP server stack (Obsidian + Calendar, protected by Dex + oauth2-proxy).
 ```
 claude.ai
   │
-  │ HTTPS  *.mcp.<baseDomain>
+  │ HTTPS  *.<baseDomain>
   ▼
 nginx ingress (MicroK8s)
   │
@@ -20,9 +20,9 @@ nginx ingress (MicroK8s)
   │                         • /auth      — scope injection → Dex
   │                         • /.well-known/openid-configuration → Dex
   │
-  ├─ auth.mcp.*  ──────►  Dex  (GitHub OAuth connector, issues JWTs)
+  ├─ auth.<baseDomain> ─►  Dex  (GitHub OAuth connector, issues JWTs)
   │
-  └─ *.mcp.*  ──────────►  oauth2-proxy (Bearer JWT validation)
+  └─ *.<baseDomain>  ───►  oauth2-proxy (Bearer JWT validation)
                               │  202 OK
                               ▼
                            MCP server pod (mcp-obsidian / mcp-calendar)
@@ -31,10 +31,10 @@ nginx ingress (MicroK8s)
 ## Prerequisites
 
 - Raspberry Pi (aarch64) running Raspberry Pi OS
-- Public DNS wildcard record: `*.mcp.<baseDomain>` → your Pi's IP
+- Public DNS wildcard record: `*.<baseDomain>` → your Pi's IP
 - A DNS record for ArgoCD: `argocd.<yourDomain>` → your Pi's IP
 - A [GitHub OAuth App](https://github.com/settings/developers) with callback URL:
-  `https://auth.mcp.<baseDomain>/callback`
+  `https://auth.<baseDomain>/callback`
 - Port 80 and 443 forwarded to the Pi
 
 ## Quick start
@@ -65,7 +65,7 @@ If you need to recreate secrets without re-running the full install:
 sudo bash -c '
   SCRIPT_DIR=$(pwd)
   source ./setup.sh
-  bootstrap_mcp_secrets mcp         knowledge-base         argocd/apps/secrets.values.yaml
+  bootstrap_mcp_secrets mcp-prod    knowledge-base-prod    argocd/apps/secrets.values.yaml
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging argocd/apps/secrets-staging.values.yaml
 '
 ```
@@ -85,7 +85,7 @@ sudo bash -c '
 | 7 | **Calico IPv6 veth fix** (first pass — covers interfaces existing at this point) |
 | 8 | cert-manager ClusterIssuer (Let's Encrypt HTTP-01) |
 | 9 | ArgoCD via Helm |
-| 10 | **MCP secrets bootstrap** — creates all secrets in `mcp` and `mcp-staging` namespaces before first ArgoCD sync |
+| 10 | **MCP secrets bootstrap** — creates all secrets in `mcp-prod` and `mcp-staging` namespaces before first ArgoCD sync |
 | 11 | ArgoCD Application manifests |
 | 12 | Nextcloud reverse-proxy ingress |
 | 13 | **Calico IPv6 veth fix** (second pass — covers new `cali*` interfaces created by ArgoCD pod deployments) |
@@ -117,6 +117,11 @@ mcp-obsidian:
     secretEnv:
       # API key for the Obsidian Local REST API plugin (set inside Obsidian).
       OBSIDIAN_API_KEY: ""
+  headlessAuth:
+    obsidianEmail: ""
+    obsidianPassword: ""       # Obsidian account password
+    obsidianSyncPassword: ""   # Obsidian Sync end-to-end encryption password
+    obsidianVault: "Default"   # vault name as shown in Obsidian Sync
 
 mcp-calendar:
   configFile:
@@ -148,9 +153,13 @@ mcp-calendar:
 | `oauth2-proxy` | `client-secret` | Same as `dexClientSecret` |
 | `oauth2-proxy` | `cookie-secret` | AES key — must be 16/24/32 bytes after base64 decode |
 | `knowledge-base-mcp-obsidian-mcp-secrets` | `OBSIDIAN_API_KEY` | Obsidian Local REST API key |
+| `obsidian-headless-auth` | `email` | Obsidian account email |
+| `obsidian-headless-auth` | `password` | Obsidian account password |
+| `obsidian-headless-auth` | `sync-password` | Obsidian Sync end-to-end encryption password |
+| `obsidian-headless-auth` | `vault` | Vault name as shown in Obsidian Sync |
 | `<app-name>-mcp-calendar-config` | `config.yaml` | Calendar YAML config (from `configFile.content`) |
 
-Secrets are created in both the `mcp` namespace (app name `knowledge-base`) and `mcp-staging`
+Secrets are created in both the `mcp-prod` namespace (app name `knowledge-base-prod`) and `mcp-staging`
 (app name `knowledge-base-staging`). The calendar config secret name follows the pattern
 `<app-name>-mcp-calendar-config`, e.g. `knowledge-base-staging-mcp-calendar-config` in staging.
 
@@ -163,11 +172,14 @@ Secrets are created in both the `mcp` namespace (app name `knowledge-base`) and 
 
 | Name | URL |
 |------|-----|
-| Obsidian | `https://obsidian.mcp.<baseDomain>/mcp/` |
-| Calendar | `https://calendar.mcp.<baseDomain>/mcp/` |
+| Obsidian | `https://obsidian.<baseDomain>/mcp/` |
+| Calendar | `https://calendar.<baseDomain>/mcp/` |
 
-3. Set **Client Secret** to the value of `dexClientSecret`
-4. Authenticate with GitHub when prompted
+*Note: won't work without the trailing slash*
+
+3. Set **Client ID** to `claude-mcp`
+4. Set **Client Secret** to the value of `dexClientSecret`
+5. Authenticate with GitHub when prompted
 
 ---
 
@@ -202,11 +214,11 @@ kubectl delete namespace mcp mcp-staging
 sudo bash -c '
   SCRIPT_DIR=$(pwd)
   source ./setup.sh
-  bootstrap_mcp_secrets mcp         knowledge-base         argocd/apps/secrets.values.yaml
+  bootstrap_mcp_secrets mcp-prod    knowledge-base-prod    argocd/apps/secrets.values.yaml
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging argocd/apps/secrets-staging.values.yaml
   configure_argocd_apps
   configure_calico_ipv6_fix
 '
 ```
 
-ArgoCD will resync automatically.
+ArgoCD will resync automatically, Obsidian syncs notes to remote and the calendars are their respective CALDAV Servers.
