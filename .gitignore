@@ -1,2 +1,2 @@
 *.secret.yaml
-secrets.values.yaml
+secrets*.values.yaml

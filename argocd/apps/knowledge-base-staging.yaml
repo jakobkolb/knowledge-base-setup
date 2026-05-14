@@ -1,0 +1,51 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: knowledge-base-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakobkolb/knowledge-base
+    targetRevision: main
+    path: chart
+    helm:
+      parameters:
+        - name: global.clusterIssuer
+          value: letsencrypt
+        - name: global.createSecrets
+          value: "false"
+      values: |
+        global:
+          baseDomain: mcp-staging.jakobjkolb.xyz
+          authServerUrl: https://auth.mcp-staging.jakobjkolb.xyz
+        api-gateway:
+          dex:
+            config:
+              issuer: https://auth.mcp-staging.jakobjkolb.xyz
+              connectors:
+                - type: github
+                  id: github
+                  name: GitHub
+                  config:
+                    clientID: $GITHUB_CLIENT_ID
+                    clientSecret: $GITHUB_CLIENT_SECRET
+                    redirectURI: https://auth.mcp-staging.jakobjkolb.xyz/callback
+          oauth2-proxy:
+            extraArgs:
+              oidc-issuer-url: https://auth.mcp-staging.jakobjkolb.xyz
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mcp-staging
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: knowledge-base-staging-mcp-calendar-config
+      jsonPointers:
+        - /data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

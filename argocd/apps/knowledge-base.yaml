@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/jakobkolb/knowledge-base
-    targetRevision: HEAD
+    targetRevision: prod
     path: chart
     helm:
       parameters:
