@@ -62,7 +62,12 @@ Re-run `sudo ./setup.sh` after the reboot to complete the install.
 If you need to recreate secrets without re-running the full install:
 
 ```bash
-sudo bash -c 'SCRIPT_DIR=/path/to/repo source ./setup.sh; bootstrap_mcp_secrets'
+sudo bash -c '
+  SCRIPT_DIR=$(pwd)
+  source ./setup.sh
+  bootstrap_mcp_secrets mcp         knowledge-base         argocd/apps/secrets.values.yaml
+  bootstrap_mcp_secrets mcp-staging knowledge-base-staging argocd/apps/secrets-staging.values.yaml
+'
 ```
 
 ---
@@ -77,12 +82,13 @@ sudo bash -c 'SCRIPT_DIR=/path/to/repo source ./setup.sh; bootstrap_mcp_secrets'
 | 4 | cgroup v2 delegation for containerd |
 | 5 | MicroK8s addons: dns, storage, ingress, cert-manager |
 | 6 | kubectl + helm (snap) |
-| 7 | cert-manager ClusterIssuer (Let's Encrypt HTTP-01) |
-| 8 | ArgoCD via Helm |
-| 9 | **MCP secrets bootstrap** — creates all secrets in `mcp` namespace before first ArgoCD sync |
-| 10 | ArgoCD Application manifests |
-| 11 | Nextcloud reverse-proxy ingress |
-| 12 | Calico IPv6 veth fix (RPi-specific) |
+| 7 | **Calico IPv6 veth fix** (first pass — covers interfaces existing at this point) |
+| 8 | cert-manager ClusterIssuer (Let's Encrypt HTTP-01) |
+| 9 | ArgoCD via Helm |
+| 10 | **MCP secrets bootstrap** — creates all secrets in `mcp` and `mcp-staging` namespaces before first ArgoCD sync |
+| 11 | ArgoCD Application manifests |
+| 12 | Nextcloud reverse-proxy ingress |
+| 13 | **Calico IPv6 veth fix** (second pass — covers new `cali*` interfaces created by ArgoCD pod deployments) |
 
 ---
 
@@ -142,9 +148,11 @@ mcp-calendar:
 | `oauth2-proxy` | `client-secret` | Same as `dexClientSecret` |
 | `oauth2-proxy` | `cookie-secret` | AES key — must be 16/24/32 bytes after base64 decode |
 | `knowledge-base-mcp-obsidian-mcp-secrets` | `OBSIDIAN_API_KEY` | Obsidian Local REST API key |
-| `knowledge-base-mcp-calendar-config` | `config.yaml` | Calendar YAML config (from `configFile.content`) |
+| `<app-name>-mcp-calendar-config` | `config.yaml` | Calendar YAML config (from `configFile.content`) |
 
-All secrets are created in the `mcp` namespace with the name shown above.
+Secrets are created in both the `mcp` namespace (app name `knowledge-base`) and `mcp-staging`
+(app name `knowledge-base-staging`). The calendar config secret name follows the pattern
+`<app-name>-mcp-calendar-config`, e.g. `knowledge-base-staging-mcp-calendar-config` in staging.
 
 ---
 
@@ -169,10 +177,19 @@ All Calico veth pairs on the RPi share the MAC `ee:ee:ee:ee:ee:ee`, which
 gives them the same IPv6 link-local address. The kernel's DAD mechanism
 oscillates the address, causing kubelet probes to fail with `EINVAL`.
 
-The fix (applied in PHASE 12) persists `net.ipv6.conf.default.disable_ipv6=1`
-via `/etc/sysctl.d/99-calico-no-ipv6.conf`. New veths inherit the setting
-automatically. If Dex or oauth2-proxy crash-loop on a fresh pod, wait 2–3
-restart cycles — they recover once Calico settles.
+The fix persists both `net.ipv6.conf.all.disable_ipv6=1` and
+`net.ipv6.conf.default.disable_ipv6=1` via `/etc/sysctl.d/99-calico-no-ipv6.conf`.
+`all` covers interfaces that exist at run time; `default` is intended to cover new
+ones, but does not reliably propagate to new veth pairs on this kernel. For that
+reason `configure_calico_ipv6_fix` is called **twice**: once before ArgoCD and
+once after, so interfaces created by ArgoCD pod deployments are also covered.
+
+If a pod is restarted manually after setup and its readiness probe returns `EINVAL`,
+re-run the fix with:
+
+```bash
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+```
 
 ---
 
@@ -181,9 +198,15 @@ restart cycles — they recover once Calico settles.
 To tear down and redeploy the MCP stack from scratch:
 
 ```bash
-kubectl delete namespace mcp
-sudo bash -c 'SCRIPT_DIR=$(pwd) source ./setup.sh; bootstrap_mcp_secrets && configure_argocd_apps'
+kubectl delete namespace mcp mcp-staging
+sudo bash -c '
+  SCRIPT_DIR=$(pwd)
+  source ./setup.sh
+  bootstrap_mcp_secrets mcp         knowledge-base         argocd/apps/secrets.values.yaml
+  bootstrap_mcp_secrets mcp-staging knowledge-base-staging argocd/apps/secrets-staging.values.yaml
+  configure_argocd_apps
+  configure_calico_ipv6_fix
+'
 ```
 
-ArgoCD will resync automatically. All pods except Dex/oauth2-proxy come up
-on the first try; those two need 1–2 restart cycles for Calico to settle.
+ArgoCD will resync automatically.
