@@ -19,6 +19,17 @@ spec:
         global:
           baseDomain: mcp-staging.jakobjkolb.xyz
           authServerUrl: https://auth.mcp-staging.jakobjkolb.xyz
+        mcp-calendar:
+          configFile:
+            enabled: false
+          extraVolumeMounts:
+            - name: calendar-config
+              mountPath: /config
+              readOnly: true
+          extraVolumes:
+            - name: calendar-config
+              secret:
+                secretName: knowledge-base-staging-mcp-calendar-config
         api-gateway:
           dex:
             config:
@@ -37,12 +48,6 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: mcp-staging
-  ignoreDifferences:
-    - group: ""
-      kind: Secret
-      name: knowledge-base-staging-mcp-calendar-config
-      jsonPointers:
-        - /data
   syncPolicy:
     automated:
       prune: true

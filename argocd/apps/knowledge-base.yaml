@@ -15,6 +15,18 @@ spec:
           value: letsencrypt
         - name: global.createSecrets
           value: "false"
+      values: |
+        mcp-calendar:
+          configFile:
+            enabled: false
+          extraVolumeMounts:
+            - name: calendar-config
+              mountPath: /config
+              readOnly: true
+          extraVolumes:
+            - name: calendar-config
+              secret:
+                secretName: knowledge-base-mcp-calendar-config
   destination:
     server: https://kubernetes.default.svc
     namespace: mcp-prod

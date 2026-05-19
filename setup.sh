@@ -390,7 +390,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   configure_calico_ipv6_fix
   install_cert_manager
   install_argocd
-  bootstrap_mcp_secrets mcp-prod    knowledge-base-prod    "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
+  bootstrap_mcp_secrets mcp-prod    knowledge-base         "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging "${SCRIPT_DIR}/argocd/apps/secrets-staging.values.yaml"
   configure_argocd_apps
   configure_nextcloud_ingress
