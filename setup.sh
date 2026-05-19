@@ -253,7 +253,7 @@ EOF
   CALENDAR_CONFIG=$(python3 - "$SECRETS_FILE" <<'PYEOF'
 import sys, re
 text = open(sys.argv[1]).read()
-m = re.search(r'content:\s+\|\n((?:[ \t]+[^\n]*\n?)+)', text)
+m = re.search(r'content:\s+\|\n((?:[ \t]+[^\n]*\n|[ \t]*\n)+)', text)
 if m:
     import textwrap
     print(textwrap.dedent(m.group(1)).rstrip())
@@ -345,6 +345,17 @@ configure_nextcloud_ingress() {
 }
 
 # =============================================================================
+# PHASE 12: CoreDNS — local hostname overrides
+# =============================================================================
+
+configure_coredns() {
+  log "Applying CoreDNS configmap (local hostname overrides)..."
+
+  kubectl apply -f "${SCRIPT_DIR}/coredns/coredns-configmap.yaml"
+  echo "  CoreDNS configmap applied (shitcloud.hopto.org → 192.168.10.23)"
+}
+
+# =============================================================================
 # PHASE 12: Calico IPv6 veth fix
 # =============================================================================
 
@@ -394,6 +405,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging "${SCRIPT_DIR}/argocd/apps/secrets-staging.values.yaml"
   configure_argocd_apps
   configure_nextcloud_ingress
+  configure_coredns
   # Re-apply Calico IPv6 fix: ArgoCD deploying pods above created new cali* veth
   # interfaces after the first fix ran, and net.ipv6.conf.default doesn't reliably
   # propagate to new veths on this kernel.
