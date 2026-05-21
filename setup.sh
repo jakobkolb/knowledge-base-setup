@@ -50,7 +50,45 @@ configure_boot() {
 }
 
 # =============================================================================
-# PHASE 2: Kernel modules
+# PHASE 2: WiFi power management
+# =============================================================================
+
+configure_wifi_power_management() {
+  # Calico uses wlan0 as the node IP (IP_AUTODETECTION_METHOD=first-found picks
+  # it when eth0 has no carrier). With WiFi power management enabled the adapter
+  # enters a dormant/sleep state periodically, which:
+  #   1. Triggers Felix's netlink interface monitor to fire state-change events.
+  #   2. Felix briefly removes and re-adds pod endpoint /32 routes.
+  #   3. During the gap, pod IPs fall through to the blackhole 10.1.77.0/26
+  #      aggregate route, returning EINVAL to the kubelet health probes.
+  #   4. With failureThreshold=3 this cascade kills pods every ~10 minutes.
+  # Disabling power management keeps the interface active and prevents the flap.
+  log "Disabling WiFi power management..."
+
+  if ! ip link show wlan0 &>/dev/null; then
+    echo "  wlan0 not found — skipping"
+    return
+  fi
+
+  # Persist via NetworkManager (Raspberry Pi OS Bookworm default network manager)
+  local NM_CONF="/etc/NetworkManager/conf.d/99-wifi-pm.conf"
+  if [[ ! -f "$NM_CONF" ]] || ! grep -q "wifi.powersave = 2" "$NM_CONF"; then
+    cat > "$NM_CONF" << 'EOF'
+[connection]
+wifi.powersave = 2
+EOF
+    echo "  Created $NM_CONF (wifi.powersave = 2 = disabled)"
+    systemctl reload NetworkManager 2>/dev/null || true
+  else
+    echo "  $NM_CONF already present"
+  fi
+
+  # Apply immediately to the running interface (survives until next reboot without NM reload)
+  iwconfig wlan0 power off 2>/dev/null && echo "  Applied iwconfig wlan0 power off" || true
+}
+
+# =============================================================================
+# PHASE 3: Kernel modules
 # =============================================================================
 
 configure_kernel_modules() {
@@ -77,7 +115,7 @@ EOF
 }
 
 # =============================================================================
-# PHASE 3: Snap + MicroK8s
+# PHASE 4: Snap + MicroK8s
 # =============================================================================
 
 install_microk8s() {
@@ -110,7 +148,7 @@ install_microk8s() {
 }
 
 # =============================================================================
-# PHASE 4: cgroup v2 delegation for containerd
+# PHASE 5: cgroup v2 delegation for containerd
 # =============================================================================
 
 configure_cgroup_delegation() {
@@ -128,7 +166,7 @@ EOF
 }
 
 # =============================================================================
-# PHASE 5: Wait for MicroK8s and enable addons
+# PHASE 6: Wait for MicroK8s and enable addons
 # =============================================================================
 
 configure_microk8s() {
@@ -162,7 +200,7 @@ configure_microk8s() {
 }
 
 # =============================================================================
-# PHASE 6: kubectl + helm
+# PHASE 7: kubectl + helm
 # =============================================================================
 
 install_tools() {
@@ -182,7 +220,7 @@ install_tools() {
 }
 
 # =============================================================================
-# PHASE 7: cert-manager
+# PHASE 8: cert-manager
 # =============================================================================
 
 install_cert_manager() {
@@ -193,7 +231,7 @@ install_cert_manager() {
 }
 
 # =============================================================================
-# PHASE 8: ArgoCD
+# PHASE 9: ArgoCD
 # =============================================================================
 
 install_argocd() {
@@ -214,7 +252,7 @@ install_argocd() {
 }
 
 # =============================================================================
-# PHASE 9: Pre-create MCP secrets (must exist before ArgoCD first sync)
+# PHASE 10: Pre-create MCP secrets (must exist before ArgoCD first sync)
 # =============================================================================
 
 # bootstrap_mcp_secrets <namespace> <app-name> <secrets-values-yaml>
@@ -319,7 +357,7 @@ PYEOF
 }
 
 # =============================================================================
-# PHASE 10: ArgoCD apps
+# PHASE 11: ArgoCD apps
 # =============================================================================
 
 configure_argocd_apps() {
@@ -334,7 +372,7 @@ configure_argocd_apps() {
 }
 
 # =============================================================================
-# PHASE 11: Nextcloud ingress (reverse proxy to external service)
+# PHASE 12: Nextcloud ingress (reverse proxy to external service)
 # =============================================================================
 
 configure_nextcloud_ingress() {
@@ -345,7 +383,7 @@ configure_nextcloud_ingress() {
 }
 
 # =============================================================================
-# PHASE 12: CoreDNS — local hostname overrides
+# PHASE 13: CoreDNS — local hostname overrides
 # =============================================================================
 
 configure_coredns() {
@@ -356,7 +394,7 @@ configure_coredns() {
 }
 
 # =============================================================================
-# PHASE 12: Calico IPv6 veth fix
+# PHASE 14: Calico IPv6 veth fix
 # =============================================================================
 
 configure_calico_ipv6_fix() {
@@ -393,6 +431,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo "=============================================="
 
   configure_boot
+  configure_wifi_power_management
   configure_kernel_modules
   install_microk8s
   configure_cgroup_delegation
