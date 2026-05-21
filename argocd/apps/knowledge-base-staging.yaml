@@ -30,20 +30,6 @@ spec:
             - name: calendar-config
               secret:
                 secretName: knowledge-base-staging-mcp-calendar-config
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 30
-            periodSeconds: 30
-            failureThreshold: 6
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            failureThreshold: 6
         api-gateway:
           dex:
             config:
