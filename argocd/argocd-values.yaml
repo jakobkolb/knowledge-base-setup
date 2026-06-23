@@ -18,6 +18,7 @@ configs:
             redirectURI: https://argocd.jakobjkolb.xyz/api/dex/callback
   rbac:
     policy.default: role:readonly
+    scopes: '[groups, email]'
     policy.csv: |
       g, jakob.j.kolb@gmail.com, role:admin
 
