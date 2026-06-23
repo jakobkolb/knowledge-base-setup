@@ -252,6 +252,48 @@ install_argocd() {
 }
 
 # =============================================================================
+# PHASE 9b: Bootstrap ArgoCD GitHub SSO secret
+# =============================================================================
+
+bootstrap_argocd_sso_secret() {
+  local SECRETS_FILE="$1"
+
+  log "Bootstrapping ArgoCD GitHub SSO secret..."
+
+  if [[ ! -f "$SECRETS_FILE" ]]; then
+    warn "$(basename "$SECRETS_FILE") not found — skipping ArgoCD SSO secret bootstrap."
+    warn "Copy it from secrets.values.yaml.example, fill in argocd.githubClientId/githubClientSecret, and re-run."
+    return
+  fi
+
+  local ARGOCD_GITHUB_CLIENT_ID ARGOCD_GITHUB_CLIENT_SECRET
+  read -r ARGOCD_GITHUB_CLIENT_ID ARGOCD_GITHUB_CLIENT_SECRET < <(
+    python3 - "$SECRETS_FILE" <<'EOF'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1]).read())
+argocd = data.get('argocd', {})
+print(argocd.get('githubClientId', ''), argocd.get('githubClientSecret', ''))
+EOF
+  )
+
+  if [[ -z "$ARGOCD_GITHUB_CLIENT_ID" || -z "$ARGOCD_GITHUB_CLIENT_SECRET" ]]; then
+    warn "argocd.githubClientId or argocd.githubClientSecret missing in $(basename "$SECRETS_FILE") — skipping ArgoCD SSO secret."
+    return
+  fi
+
+  # Patch argocd-secret with the credentials. ArgoCD's ReplaceStringSecret
+  # does a flat map lookup: $github.clientID → argocd-secret["github.clientID"].
+  kubectl -n argocd patch secret argocd-secret \
+    --type merge \
+    -p "{\"data\":{
+      \"github.clientID\":\"$(printf '%s' "$ARGOCD_GITHUB_CLIENT_ID" | base64 -w0)\",
+      \"github.clientSecret\":\"$(printf '%s' "$ARGOCD_GITHUB_CLIENT_SECRET" | base64 -w0)\"
+    }}"
+
+  echo "  ArgoCD GitHub SSO credentials patched into argocd-secret"
+}
+
+# =============================================================================
 # PHASE 10: Pre-create MCP secrets (must exist before ArgoCD first sync)
 # =============================================================================
 
@@ -440,6 +482,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   configure_calico_ipv6_fix
   install_cert_manager
   install_argocd
+  bootstrap_argocd_sso_secret "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
   bootstrap_mcp_secrets mcp-prod    knowledge-base         "${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging "${SCRIPT_DIR}/argocd/apps/secrets-staging.values.yaml"
   configure_argocd_apps

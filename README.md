@@ -33,8 +33,9 @@ nginx ingress (MicroK8s)
 - Raspberry Pi (aarch64) running Raspberry Pi OS
 - Public DNS wildcard record: `*.<baseDomain>` → your Pi's IP
 - A DNS record for ArgoCD: `argocd.<yourDomain>` → your Pi's IP
-- A [GitHub OAuth App](https://github.com/settings/developers) with callback URL:
-  `https://auth.<baseDomain>/callback`
+- Two [GitHub OAuth Apps](https://github.com/settings/developers):
+  - **MCP stack**: callback URL `https://auth.<baseDomain>/callback`
+  - **ArgoCD SSO**: callback URL `https://argocd.<baseDomain>/api/dex/callback`
 - Port 80 and 443 forwarded to the Pi
 
 ## Quick start
@@ -65,6 +66,7 @@ If you need to recreate secrets without re-running the full install:
 sudo bash -c '
   SCRIPT_DIR=$(pwd)
   source ./setup.sh
+  bootstrap_argocd_sso_secret          argocd/apps/secrets.values.yaml
   bootstrap_mcp_secrets mcp-prod    knowledge-base-prod    argocd/apps/secrets.values.yaml
   bootstrap_mcp_secrets mcp-staging knowledge-base-staging argocd/apps/secrets-staging.values.yaml
 '
@@ -85,6 +87,7 @@ sudo bash -c '
 | 7 | **Calico IPv6 veth fix** (first pass — covers interfaces existing at this point) |
 | 8 | cert-manager ClusterIssuer (Let's Encrypt HTTP-01) |
 | 9 | ArgoCD via Helm |
+| 9b | **ArgoCD GitHub SSO secret** — creates `argocd-github-sso` secret in `argocd` namespace |
 | 10 | **MCP secrets bootstrap** — creates all secrets in `mcp-prod` and `mcp-staging` namespaces before first ArgoCD sync |
 | 11 | ArgoCD Application manifests |
 | 12 | Nextcloud reverse-proxy ingress |
@@ -97,10 +100,15 @@ sudo bash -c '
 Create `argocd/apps/secrets.values.yaml` (this file is gitignored):
 
 ```yaml
+argocd:
+  githubClientId: ""        # ArgoCD GitHub OAuth App → Client ID
+  githubClientSecret: ""    # ArgoCD GitHub OAuth App → Client Secret
+  # Callback URL: https://argocd.<baseDomain>/api/dex/callback
+
 global:
   secrets:
-    githubClientId: ""        # GitHub OAuth App → Settings → Client ID
-    githubClientSecret: ""    # GitHub OAuth App → Settings → Client Secret
+    githubClientId: ""        # MCP stack GitHub OAuth App → Client ID
+    githubClientSecret: ""    # MCP stack GitHub OAuth App → Client Secret
 
     # Shared secret between Dex (staticClient) and oauth2-proxy.
     # Also enter this value as the "Client Secret" in claude.ai MCP settings.
@@ -144,20 +152,22 @@ mcp-calendar:
 
 ### Secret reference
 
-| Secret | Key | Description |
-|--------|-----|-------------|
-| `dex-github-client` | `GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
-| `dex-github-client` | `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
-| `dex-static-client` | `DEX_CLIENT_SECRET` | Shared Dex↔oauth2-proxy secret |
-| `oauth2-proxy` | `client-id` | Always `claude-mcp` |
-| `oauth2-proxy` | `client-secret` | Same as `dexClientSecret` |
-| `oauth2-proxy` | `cookie-secret` | AES key — must be 16/24/32 bytes after base64 decode |
-| `knowledge-base-mcp-obsidian-mcp-secrets` | `OBSIDIAN_API_KEY` | Obsidian Local REST API key |
-| `obsidian-headless-auth` | `email` | Obsidian account email |
-| `obsidian-headless-auth` | `password` | Obsidian account password |
-| `obsidian-headless-auth` | `sync-password` | Obsidian Sync end-to-end encryption password |
-| `obsidian-headless-auth` | `vault` | Vault name as shown in Obsidian Sync |
-| `<app-name>-mcp-calendar-config` | `config.yaml` | Calendar YAML config (from `configFile.content`) |
+| Secret | Namespace | Key | Description |
+|--------|-----------|-----|-------------|
+| `argocd-github-sso` | `argocd` | `clientID` | ArgoCD GitHub OAuth App client ID |
+| `argocd-github-sso` | `argocd` | `clientSecret` | ArgoCD GitHub OAuth App client secret |
+| `dex-github-client` | `mcp-prod` / `mcp-staging` | `GITHUB_CLIENT_ID` | MCP stack GitHub OAuth App client ID |
+| `dex-github-client` | `mcp-prod` / `mcp-staging` | `GITHUB_CLIENT_SECRET` | MCP stack GitHub OAuth App client secret |
+| `dex-static-client` | `mcp-prod` / `mcp-staging` | `DEX_CLIENT_SECRET` | Shared Dex↔oauth2-proxy secret |
+| `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `client-id` | Always `claude-mcp` |
+| `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `client-secret` | Same as `dexClientSecret` |
+| `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `cookie-secret` | AES key — must be 16/24/32 bytes after base64 decode |
+| `knowledge-base-mcp-obsidian-mcp-secrets` | `mcp-prod` / `mcp-staging` | `OBSIDIAN_API_KEY` | Obsidian Local REST API key |
+| `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `email` | Obsidian account email |
+| `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `password` | Obsidian account password |
+| `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `sync-password` | Obsidian Sync end-to-end encryption password |
+| `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `vault` | Vault name as shown in Obsidian Sync |
+| `<app-name>-mcp-calendar-config` | `mcp-prod` / `mcp-staging` | `config.yaml` | Calendar YAML config (from `configFile.content`) |
 
 Secrets are created in both the `mcp-prod` namespace (app name `knowledge-base-prod`) and `mcp-staging`
 (app name `knowledge-base-staging`). The calendar config secret name follows the pattern

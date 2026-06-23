@@ -6,6 +6,20 @@ configs:
     server.insecure: true
   cm:
     url: "https://argocd.jakobjkolb.xyz"
+    admin.enabled: "false"
+    dex.config: |
+      connectors:
+        - type: github
+          id: github
+          name: GitHub
+          config:
+            clientID: $github.clientID
+            clientSecret: $github.clientSecret
+            redirectURI: https://argocd.jakobjkolb.xyz/api/dex/callback
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      g, jakob.j.kolb@gmail.com, role:admin
 
 server:
   ingress:
