@@ -18,10 +18,14 @@ data:
           class error
         }
         hosts {
-          # Nextcloud is on the LAN at 192.168.10.23.
+          # Nextcloud is on the LAN at 192.168.10.23, but pods must resolve
+          # shitcloud.hopto.org to the ingress controller's node (192.168.10.54,
+          # nginx bound via hostPort 80/443), not straight to Nextcloud.
+          # Otherwise ACME HTTP-01 self-checks (cert-manager) bypass the
+          # ingress/solver entirely and always see a 404 from Nextcloud itself.
           # Without this override, pods would try to reach shitcloud.hopto.org
           # via the external IP and fail (hairpin NAT not supported by the router).
-          192.168.10.23 shitcloud.hopto.org
+          192.168.10.54 shitcloud.hopto.org
           fallthrough
         }
         kubernetes cluster.local in-addr.arpa ip6.arpa {
