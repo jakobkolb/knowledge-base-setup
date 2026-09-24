@@ -83,6 +83,7 @@ sudo bash -c '
 | 3 | Snap + MicroK8s 1.32/stable |
 | 4 | cgroup v2 delegation for containerd |
 | 5 | MicroK8s addons: dns, storage, ingress, cert-manager |
+| 5b | **Ingress snippet annotations** — allows the `configuration-snippet` the MCP gateway needs (see below) |
 | 6 | kubectl + helm (snap) |
 | 7 | **Calico IPv6 veth fix** (first pass — covers interfaces existing at this point) |
 | 8 | cert-manager ClusterIssuer (Let's Encrypt HTTP-01) |
@@ -215,6 +216,60 @@ re-run the fix with:
 ```bash
 sudo sysctl -w $(ip link show | grep cali | awk '{print $2}' | tr -d ':' | cut -d'@' -f1 | \
   xargs -I{} echo "net.ipv6.conf.{}.disable_ipv6=1") 2>/dev/null || true
+```
+
+---
+
+## Ingress snippet annotations
+
+The `api-gateway` chart ([mcp-oauth-gateway](https://github.com/jakobkolb/mcp-oauth-gateway))
+adds a `nginx.ingress.kubernetes.io/configuration-snippet` to every `/mcp` ingress.
+When a request has no valid token, the snippet adds the RFC 9728 header
+`WWW-Authenticate: Bearer resource_metadata=…` to the 401 response, which tells
+MCP clients where to start the OAuth flow. nginx's `auth_request` drops the
+header from oauth2-proxy, so the snippet is the only thing that sends it.
+
+Since ingress-nginx 1.12, the controller classifies `configuration-snippet` as a
+**Critical**-risk annotation. With the default `annotations-risk-level: High` it
+**rejects any ingress that carries one**. The only trace is a controller log line:
+
+```
+annotation group ConfigurationSnippet contains risky annotation based on ingress configuration
+```
+
+When that happens:
+
+- **A new ingress** is never loaded and its host returns 404. This is what
+  happened to `whisper.<baseDomain>` when mcp-whisper was first deployed.
+- **An existing ingress that gains the snippet** is rejected on update. The
+  controller keeps serving the stale pre-snippet copy, so the endpoint still
+  works but returns 401 **without** the challenge.
+- **After a controller restart**, every snippet-carrying ingress is dropped
+  and all MCP endpoints go 404 at once.
+
+`ingress-nginx/nginx-load-balancer-microk8s-conf.yaml` sets
+`allow-snippet-annotations: "true"` and `annotations-risk-level: "Critical"` in
+the MicroK8s ingress ConfigMap. `setup.sh` applies it right after the ingress
+addon is enabled, before ArgoCD creates any ingresses. If the ConfigMap changed,
+it restarts the controller, because the controller does not re-validate
+ingresses it has already rejected.
+
+**Trade-off:** anyone who can create an Ingress in any namespace can now
+inject raw nginx config. On a single-admin cluster that is acceptable; do not
+copy this to a cluster with untrusted tenants.
+
+**Re-apply this after `microk8s disable/enable ingress`**, which recreates the
+ConfigMap without these keys:
+
+```bash
+kubectl apply -f ingress-nginx/nginx-load-balancer-microk8s-conf.yaml
+kubectl -n ingress rollout restart daemonset nginx-ingress-microk8s-controller
+```
+
+Check: an unauthenticated request must return the challenge.
+
+```bash
+curl -si https://calendar.<baseDomain>/mcp | grep -i www-authenticate
 ```
 
 ---

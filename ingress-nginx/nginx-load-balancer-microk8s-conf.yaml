@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-load-balancer-microk8s-conf
+  namespace: ingress
+data:
+  # The api-gateway chart (jakobkolb/mcp-oauth-gateway) puts a
+  # configuration-snippet on every MCP /mcp ingress to send the RFC 9728
+  # WWW-Authenticate challenge. ingress-nginx >= 1.12 rejects that annotation
+  # unless both settings below are present — see "Ingress snippet annotations"
+  # in the README.
+  allow-snippet-annotations: "true"
+  annotations-risk-level: "Critical"

@@ -191,6 +191,19 @@ configure_microk8s() {
     echo "  ssl-passthrough already enabled"
   fi
 
+  # Allow the configuration-snippet the MCP gateway puts on its ingresses —
+  # see "Ingress snippet annotations" in the README.
+  log "Allowing snippet annotations on nginx ingress..."
+  if microk8s kubectl apply -f "${SCRIPT_DIR}/ingress-nginx/nginx-load-balancer-microk8s-conf.yaml" \
+      | grep -q "unchanged"; then
+    echo "  snippet annotations already allowed"
+  else
+    # The controller does not re-validate ingresses it already rejected when this
+    # ConfigMap changes, so restart it to pick those up (no-op on a fresh cluster).
+    microk8s kubectl rollout restart daemonset -n ingress "$INGRESS_DS"
+    echo "  snippet annotations allowed, ingress controller restarted"
+  fi
+
   # Export kubeconfig
   microk8s config > /home/${K8S_USER}/.kube/config
   chmod 600 /home/${K8S_USER}/.kube/config
