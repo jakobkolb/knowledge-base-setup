@@ -50,6 +50,8 @@ spec:
                 - {<<: *github-connector, id: github-example}
                 - {<<: *github-connector, id: github-obsidian}
                 - {<<: *github-connector, id: github-whisper}
+                - {<<: *github-connector, id: github-whatsapp}
+                - {<<: *github-connector, id: github-print}
           oauth2-proxy:
             extraArgs:
               oidc-issuer-url: https://auth.mcp-staging.jakobjkolb.xyz
