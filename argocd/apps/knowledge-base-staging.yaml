@@ -32,26 +32,10 @@ spec:
                 secretName: knowledge-base-staging-mcp-calendar-config
         api-gateway:
           dex:
+            env:
+              DEX_REDIRECT_URI: https://auth.mcp-staging.jakobjkolb.xyz/callback
             config:
               issuer: https://auth.mcp-staging.jakobjkolb.xyz
-              # Replaces the chart's connector list wholesale, so it must keep one
-              # "github-<subdomain>" connector per MCP endpoint, as in the chart's
-              # values.yaml (api-gateway perEndpointConnectors).
-              connectors:
-                - &github-connector
-                  type: github
-                  id: github
-                  name: GitHub
-                  config:
-                    clientID: $GITHUB_CLIENT_ID
-                    clientSecret: $GITHUB_CLIENT_SECRET
-                    redirectURI: https://auth.mcp-staging.jakobjkolb.xyz/callback
-                - {<<: *github-connector, id: github-calendar}
-                - {<<: *github-connector, id: github-example}
-                - {<<: *github-connector, id: github-obsidian}
-                - {<<: *github-connector, id: github-whisper}
-                - {<<: *github-connector, id: github-whatsapp}
-                - {<<: *github-connector, id: github-print}
           oauth2-proxy:
             extraArgs:
               oidc-issuer-url: https://auth.mcp-staging.jakobjkolb.xyz
