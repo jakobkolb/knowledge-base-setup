@@ -72,6 +72,22 @@ sudo bash -c '
 '
 ```
 
+### WhatsApp chat allow-list
+
+Which chats `mcp-whatsapp` may read is set by `mcp-whatsapp.allowedChats` in the
+environment's secrets file (comma-separated JIDs from the `list_available_chats`
+tool). The Application manifest only carries the placeholder
+`${WHATSAPP_ALLOWED_CHATS}`; `configure_argocd_apps` fills it in when it applies
+the manifest, so apply Applications through `setup.sh`, not with `kubectl apply -f`.
+After changing the list:
+
+```bash
+sudo bash -c '
+  source ./setup.sh
+  configure_argocd_apps
+'
+```
+
 ---
 
 ## What the script does

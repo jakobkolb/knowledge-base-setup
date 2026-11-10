@@ -435,13 +435,37 @@ PYEOF
 # PHASE 11: ArgoCD apps
 # =============================================================================
 
+# whatsapp_allowed_chats <secrets-values-yaml>
+# Prints mcp-whatsapp.allowedChats as comma-separated JIDs; nothing if the file
+# or the value is missing, or if it holds anything but JID characters (it is
+# pasted into a manifest).
+whatsapp_allowed_chats() {
+  [[ -f "$1" ]] || return 0
+  python3 - "$1" <<'PYEOF'
+import sys, re
+m = re.search(r'^\s+allowedChats:\s+"?([^"\n#]+)', open(sys.argv[1]).read(), re.MULTILINE)
+chats = re.sub(r'\s+', '', m.group(1)) if m else ''
+if chats and not re.fullmatch(r'[0-9A-Za-z@._:,-]+', chats):
+    sys.stderr.write("allowedChats contains characters that are not part of a JID - ignored\n")
+    chats = ''
+print(chats)
+PYEOF
+}
+
 configure_argocd_apps() {
   log "Configuring ArgoCD apps..."
 
   for app in "${SCRIPT_DIR}"/argocd/apps/*.yaml; do
     # Skip helm values files (not Kubernetes manifests)
     [[ "$(basename "$app")" == *.values.yaml ]] && continue
-    kubectl apply -f "$app"
+    # Same file-per-environment mapping as the bootstrap_mcp_secrets calls below.
+    local secrets="${SCRIPT_DIR}/argocd/apps/secrets.values.yaml"
+    [[ "$(basename "$app")" == *-staging.yaml ]] && secrets="${SCRIPT_DIR}/argocd/apps/secrets-staging.values.yaml"
+    # Fill the ${WHATSAPP_ALLOWED_CHATS} placeholder; files without it pass through unchanged.
+    WHATSAPP_ALLOWED_CHATS="$(whatsapp_allowed_chats "$secrets")" python3 -c '
+import os, sys
+sys.stdout.write(open(sys.argv[1]).read().replace("${WHATSAPP_ALLOWED_CHATS}", os.environ["WHATSAPP_ALLOWED_CHATS"]))
+' "$app" | kubectl apply -f -
     echo "  Applied $(basename "$app")"
   done
 }
