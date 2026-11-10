@@ -30,6 +30,13 @@ spec:
             - name: calendar-config
               secret:
                 secretName: knowledge-base-staging-mcp-calendar-config
+        mcp-whatsapp:
+          env:
+            # Placeholder: setup.sh replaces it with mcp-whatsapp.allowedChats from
+            # secrets-staging.values.yaml when it applies this file, so the chat
+            # JIDs stay out of the repo. Applied as is, no chat matches and the
+            # server serves no content.
+            WHATSAPP_ALLOWED_CHATS: "${WHATSAPP_ALLOWED_CHATS}"
         api-gateway:
           dex:
             env:
