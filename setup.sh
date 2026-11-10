@@ -353,6 +353,15 @@ if m:
 PYEOF
   )
 
+  # Read on its own: the positional read above shifts when an earlier value is empty.
+  local ALLOWED_EMAILS
+  ALLOWED_EMAILS=$(python3 - "$SECRETS_FILE" <<'PYEOF'
+import sys, re
+m = re.search(r'^\s+allowedEmails:\s+"?([^"\s#]+)', open(sys.argv[1]).read(), re.MULTILINE)
+print(m.group(1) if m else '')
+PYEOF
+  )
+
   # Validate required values (obsidian is optional — mcp-obsidian removed from main)
   local missing=()
   [[ -z "$GITHUB_CLIENT_ID" ]]     && missing+=("githubClientId")
@@ -397,6 +406,17 @@ PYEOF
       --from-literal=vault="$OBSIDIAN_VAULT" \
       --save-config --dry-run=client -o yaml | kubectl apply -f -
     echo "  Obsidian headless auth secret created"
+  fi
+
+  # Who may log in. oauth2-proxy (api-gateway >= 0.6.0) admits only these
+  # addresses and does not start without this Secret.
+  if [[ -n "$ALLOWED_EMAILS" ]]; then
+    kubectl -n "$NS" create secret generic oauth2-proxy-allowed-emails \
+      --from-literal=restricted_user_access="$ALLOWED_EMAILS" \
+      --save-config --dry-run=client -o yaml | kubectl apply -f -
+    echo "  Login allow-list secret created"
+  else
+    warn "allowedEmails missing in $(basename "$SECRETS_FILE") — oauth2-proxy-allowed-emails not created; oauth2-proxy will not start on api-gateway >= 0.6.0"
   fi
 
   if [[ -n "$CALENDAR_CONFIG" ]]; then

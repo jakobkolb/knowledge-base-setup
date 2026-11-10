@@ -121,6 +121,9 @@ global:
     # Generate: python3 -c 'import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
     cookieSecret: ""
 
+    # The one address allowed to log in: primary, verified email of your GitHub account.
+    allowedEmails: ""
+
 mcp-obsidian:
   mcp:
     secretEnv:
@@ -163,6 +166,7 @@ mcp-calendar:
 | `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `client-id` | Always `claude-mcp` |
 | `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `client-secret` | Same as `dexClientSecret` |
 | `oauth2-proxy` | `mcp-prod` / `mcp-staging` | `cookie-secret` | AES key — must be 16/24/32 bytes after base64 decode |
+| `oauth2-proxy-allowed-emails` | `mcp-prod` / `mcp-staging` | `restricted_user_access` | `allowedEmails`: the address allowed to log in (api-gateway >= 0.6.0) |
 | `knowledge-base-mcp-obsidian-mcp-secrets` | `mcp-prod` / `mcp-staging` | `OBSIDIAN_API_KEY` | Obsidian Local REST API key |
 | `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `email` | Obsidian account email |
 | `obsidian-headless-auth` | `mcp-prod` / `mcp-staging` | `password` | Obsidian account password |
